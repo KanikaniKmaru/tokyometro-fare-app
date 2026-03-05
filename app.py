@@ -193,7 +193,17 @@ try:
                 for en in st_nodes[end_s]:
                     try:
                         for p in nx.shortest_simple_paths(G_recommend, sn, en, weight='weight'):
-                            tr = sum(1 for i in range(len(p)-1) if G_recommend[p[i]][p[i+1]]['line'] == "同一駅")
+                            # --- 修正点：連続する「同一駅」エッジを1回とカウント ---
+                            tr = 0
+                            in_transfer = False
+                            for idx in range(len(p)-1):
+                                if G_recommend[p[idx]][p[idx+1]]['line'] == "同一駅":
+                                    if not in_transfer:
+                                        tr += 1
+                                        in_transfer = True
+                                else:
+                                    in_transfer = False
+                            
                             key = "->".join([node.split('_')[0] for node in p])
                             if not any(r['key'] == key for r in transfer_results):
                                 transfer_results.append({'path': p, 'transfers': tr, 'key': key})
