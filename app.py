@@ -16,9 +16,10 @@ LINE_COLORS = {
 
 @st.cache_data
 def load_data():
+    # 読み仮名付きの新しいファイルを読み込み
     df = pd.read_csv('metrodata_kana.csv')
     
-    # 読み方データは保持（将来用）
+    # 読み方データを辞書に保存（検索用）
     kana_dict = {}
     for _, row in df.iterrows():
         kana_dict[row['station1']] = row['station1_kana']
@@ -82,7 +83,8 @@ def format_route_html(path, G, is_transfer_graph=False):
         if line == "同一駅":
             if curr_line:
                 html += f"<b>{seg_start}</b><br> ↓ {line_tag(curr_line, seg_is_pass)} {seg_dist:.1f}km<br>"
-            html += f"<b>{u.split('_')[0]}</b> (乗り換え)<br>"
+            # 同一駅（乗り換え）をより分かりやすく表示
+            html += f"<b>{u.split('_')[0]}</b> (徒歩で乗り換え)<br>"
             seg_start = v.split('_')[0] if is_transfer_graph else v
             curr_line, seg_dist, seg_is_pass = None, 0.0, False
             continue
@@ -106,16 +108,16 @@ try:
     G_base, G_transfer, all_stations, station_to_lines, kana_dict = load_data()
     if "pass_edges" not in st.session_state: st.session_state.pass_edges = set()
 
-    # 漢字のみを表示するように変更
-    def format_station_minimal(s):
-        return s
+    # 検索用のフォーマット：漢字とかなを両方含める（| で区切って見やすく）
+    def format_station_for_search(s):
+        return f"{s} | {kana_dict.get(s, '')}"
 
     # --- 定期管理 ---
     with st.expander(f"🎫 定期券の登録・管理 ({len(st.session_state.pass_edges)}区間)"):
         c1, cv, c2 = st.columns(3)
-        p_start = c1.selectbox("起点", all_stations, key="ps", format_func=format_station_minimal)
-        p_via = cv.selectbox("経由(任意)", ["なし"] + all_stations, key="pv", format_func=lambda x: x if x=="なし" else format_station_minimal(x))
-        p_end = c2.selectbox("終点", all_stations, key="pe", format_func=format_station_minimal)
+        p_start = c1.selectbox("起点", all_stations, key="ps", format_func=format_station_for_search)
+        p_via = cv.selectbox("経由(任意)", ["なし"] + all_stations, key="pv", format_func=lambda x: x if x=="なし" else format_station_for_search(x))
+        p_end = c2.selectbox("終点", all_stations, key="pe", format_func=format_station_for_search)
         msg_slot = st.empty()
         
         if st.button("この経路を定期として登録", use_container_width=True):
@@ -148,8 +150,8 @@ try:
     # --- ルート検索 ---
     st.markdown("### 🔍 ルート検索")
     col1, col2 = st.columns(2)
-    start_s = col1.selectbox("出発駅", all_stations, index=all_stations.index("新宿三丁目") if "新宿三丁目" in all_stations else 0, format_func=format_station_minimal)
-    end_s = col2.selectbox("到着駅", all_stations, index=all_stations.index("上野") if "上野" in all_stations else 0, format_func=format_station_minimal)
+    start_s = col1.selectbox("出発駅", all_stations, index=all_stations.index("新宿三丁目") if "新宿三丁目" in all_stations else 0, format_func=format_station_for_search)
+    end_s = col2.selectbox("到着駅", all_stations, index=all_stations.index("上野") if "上野" in all_stations else 0, format_func=format_station_for_search)
 
     if st.button("🔍 運賃・経路を検索", type="primary", use_container_width=True):
         if start_s == end_s:
