@@ -6,13 +6,33 @@ import math
 # 画面設定
 st.set_page_config(page_title="メトロ運賃・定期案内", page_icon="🚇", layout="centered")
 
-# --- 設定・カラー ---
-LINE_COLORS = {
-    "銀座線": "#ff9500", "丸ノ内線": "#f62e36", "日比谷線": "#b5b5ac",
-    "東西線": "#009bbf", "千代田線": "#00bb85", "有楽町線": "#c1a470",
-    "半蔵門線": "#8f76d6", "南北線": "#00ac9b", "副都心線": "#9c5e31",
-    "同一駅": "#333333"
-}
+# --- UIカスタマイズ（文字を大きくする設定） ---
+st.markdown("""
+    <style>
+    /* セレクトボックスのラベル文字 */
+    .stSelectbox label p {
+        font-size: 1.1rem !important;
+        font-weight: bold !important;
+        color: #333 !important;
+    }
+    /* 選択された駅名の文字 */
+    div[data-baseweb="select"] > div {
+        font-size: 1.15rem !important;
+        padding-top: 5px !important;
+        padding-bottom: 5px !important;
+    }
+    /* 候補リストの文字と余白 */
+    ul[role="listbox"] li {
+        font-size: 1.1rem !important;
+        padding: 12px !important;
+    }
+    /* ボタンの文字 */
+    .stButton button {
+        font-size: 1.1rem !important;
+        height: 3em !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
 @st.cache_data
 def load_data():
@@ -62,7 +82,7 @@ def line_tag(line, is_pass=False):
     for key, val in LINE_COLORS.items():
         if key in line: color = val; break
     lbl = f"{line} [定期内]" if is_pass else line
-    return f'<span style="background-color:{color}; color:white; padding:2px 6px; border-radius:3px; font-size:0.8em; font-weight:bold;">{lbl}</span>'
+    return f'<span style="background-color:{color}; color:white; padding:2px 6px; border-radius:3px; font-size:0.85em; font-weight:bold;">{lbl}</span>'
 
 def format_route_html(path, G, pass_edges=set()):
     html = ""
@@ -117,6 +137,7 @@ try:
         st.caption(f"📍 選択中の経路: {route_preview}")
         
         msg_slot = st.empty()
+        do_rerun = False
         if st.button("この区間を定期券として追加する", use_container_width=True, type="primary"):
             try:
                 if p_start == p_end: msg_slot.warning("起点と終点が同じ駅です。")
@@ -130,8 +151,12 @@ try:
                         best_k = min(edge_opts, key=lambda k: edge_opts[k]['weight'])
                         st.session_state.pass_edges.add(tuple(sorted((u, v))) + (edge_opts[best_k]['line'],))
                     msg_slot.success(f"登録完了！")
-                    st.rerun()
-            except: msg_slot.error(f"経路が見つかりません。")
+                    do_rerun = True # 成功フラグを立てる
+            except nx.NetworkXNoPath: msg_slot.error("経路が見つかりませんでした。")
+            except Exception as e: msg_slot.error(f"エラー: {e}")
+        
+        # rerunをtryの外側で行う（嘘つきエラー対策）
+        if do_rerun: st.rerun()
 
         if st.button("定期券データをリセット", type="secondary"):
             st.session_state.pass_edges = set(); st.rerun()
@@ -147,11 +172,9 @@ try:
     if st.button("🔍 検索実行", use_container_width=True, type="primary"):
         if start_s == end_s: st.warning("出発駅と到着駅が同じです。")
         else:
-            # 正規運賃
             dist_reg = nx.shortest_path_length(G_base, start_s, end_s, weight='weight')
             f_reg = get_fare_info(dist_reg)
 
-            # 定期考慮
             G_fare_pass = G_fare_detail.copy()
             for u, v, data in G_fare_pass.edges(data=True):
                 u_st, v_st = u.split('_')[0], v.split('_')[0]
@@ -168,16 +191,11 @@ try:
             
             f_eff = get_fare_info(min_dist_eff)
             
-            # --- 運賃表示セクション ---
             st.markdown(f"### 💰 精算額: {f_eff['ta']}円")
             c1, c2 = st.columns(2)
-            
-            # きっぷ
             diff_t = f_eff['ta'] - f_reg['ta']
             c1.metric("きっぷ (大人)", f"{f_eff['ta']}円", f"{diff_t}円", delta_color="normal")
             c1.caption(f"小児: {f_eff['tc']}円 (通常:{f_reg['tc']}円)")
-            
-            # ICカード
             diff_i = f_eff['ia'] - f_reg['ia']
             c2.metric("ICカード (大人)", f"{f_eff['ia']}円", f"{diff_i}円", delta_color="normal")
             c2.caption(f"小児: {f_eff['ic']}円 (通常:{f_reg['ic']}円)")
