@@ -6,34 +6,6 @@ import math
 # 画面設定
 st.set_page_config(page_title="メトロ運賃・定期案内", page_icon="🚇", layout="centered")
 
-# --- UIカスタマイズ（文字を大きくする設定） ---
-st.markdown("""
-    <style>
-    /* セレクトボックスのラベル文字 */
-    .stSelectbox label p {
-        font-size: 1.1rem !important;
-        font-weight: bold !important;
-        color: #333 !important;
-    }
-    /* 選択された駅名の文字 */
-    div[data-baseweb="select"] > div {
-        font-size: 1.15rem !important;
-        padding-top: 5px !important;
-        padding-bottom: 5px !important;
-    }
-    /* 候補リストの文字と余白 */
-    ul[role="listbox"] li {
-        font-size: 1.1rem !important;
-        padding: 12px !important;
-    }
-    /* ボタンの文字 */
-    .stButton button {
-        font-size: 1.1rem !important;
-        height: 3em !important;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
 @st.cache_data
 def load_data():
     df = pd.read_csv('metrodata_kana.csv')
@@ -119,6 +91,14 @@ def format_route_html(path, G, pass_edges=set()):
     if last_printed != final_st: html += f"<b>{final_st}</b>"
     return html
 
+# --- 設定・カラー ---
+LINE_COLORS = {
+    "銀座線": "#ff9500", "丸ノ内線": "#f62e36", "日比谷線": "#b5b5ac",
+    "東西線": "#009bbf", "千代田線": "#00bb85", "有楽町線": "#c1a470",
+    "半蔵門線": "#8f76d6", "南北線": "#00ac9b", "副都心線": "#9c5e31",
+    "同一駅": "#333333"
+}
+
 try:
     G_base, G_recommend, G_fare_detail, all_stations, st_nodes, kana_dict = load_data()
     if "pass_edges" not in st.session_state: st.session_state.pass_edges = set()
@@ -151,11 +131,10 @@ try:
                         best_k = min(edge_opts, key=lambda k: edge_opts[k]['weight'])
                         st.session_state.pass_edges.add(tuple(sorted((u, v))) + (edge_opts[best_k]['line'],))
                     msg_slot.success(f"登録完了！")
-                    do_rerun = True # 成功フラグを立てる
+                    do_rerun = True
             except nx.NetworkXNoPath: msg_slot.error("経路が見つかりませんでした。")
             except Exception as e: msg_slot.error(f"エラー: {e}")
         
-        # rerunをtryの外側で行う（嘘つきエラー対策）
         if do_rerun: st.rerun()
 
         if st.button("定期券データをリセット", type="secondary"):
