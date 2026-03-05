@@ -37,7 +37,7 @@ try:
         
         # 運賃判定
         calc_km = math.ceil(total_dist)
-        fares = [(6, 180), (11, 210), (19, 260), (28, 300), (float('inf'), 340)]
+        fares = [(6, 180), (11, 210), (19, 260), (27, 300), (float('inf'), 330)]
         fare = next(f for k, f in fares if calc_km <= k)
 
         # 結果表示
@@ -62,4 +62,5 @@ try:
         st.write(f"**{segment_start}** → ({current_line} : {segment_dist:.1f}km) → **{path[-1]}**")
 
 except Exception as e:
+
     st.error(f"エラーが発生しました: {e}")
