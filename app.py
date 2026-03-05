@@ -6,7 +6,7 @@ import math
 # 画面設定
 st.set_page_config(page_title="俺専用・メトロ運賃案内", page_icon="🚇")
 st.title("🚇 東京メトロ 最短キロ程・運賃検索")
-st.caption("あなたが自作したデータで計算する、世界に一つだけの運賃案内です。")
+st.caption("東京メトロの運賃計算に使われる、出発駅から到着駅までの最短経路を調べます")
 
 # 1. データの読み込み
 @st.cache_data # データをキャッシュして高速化
@@ -64,3 +64,4 @@ try:
 except Exception as e:
 
     st.error(f"エラーが発生しました: {e}")
+
