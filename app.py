@@ -162,4 +162,47 @@ try:
             for u, v, key, data in G_base.edges(keys=True, data=True):
                 is_p = (tuple(sorted((u, v))) + (data['line'],)) in st.session_state.pass_edges
                 w = 0.0 if is_p else data['weight']
-                if not
+                if not G_fare.has_edge(u, v) or w < G_fare[u][v]['weight']:
+                    G_fare.add_edge(u, v, weight=w, line=data['line'], is_pass=is_p)
+            
+            dist_eff = nx.shortest_path_length(G_fare, start_s, end_s, weight='weight')
+            f_eff = get_fare_info(dist_eff)
+
+            st.markdown("### 💰 運賃比較")
+            c1, c2 = st.columns(2)
+            diff_t = f_eff['ta'] - f_reg['ta']
+            c1.metric("きっぷ (大人)", f"{f_eff['ta']}円", f"{diff_t}円", delta_color="normal")
+            st.caption(f"正規: {f_reg['ta']}円 / 小児: {f_eff['tc']}円")
+            
+            diff_i = f_eff['ia'] - f_reg['ia']
+            c2.metric("ICカード (大人)", f"{f_eff['ia']}円", f"{diff_i}円", delta_color="normal")
+            st.caption(f"正規: {f_reg['ia']}円 / 小児: {f_eff['ic']}円")
+
+            if diff_t < 0:
+                st.success(f"定期券の利用で **{-diff_t}円** おトクになりました！")
+
+            with st.expander("📝 運賃計算の根拠を確認する"):
+                path_f = nx.shortest_path(G_fare, start_s, end_s, weight='weight')
+                st.markdown(format_route_html(path_f, G_fare), unsafe_allow_html=True)
+
+            st.divider()
+            st.markdown("### 🚶 おすすめの乗車ルート")
+            transfer_results = []
+            for sn in station_to_lines[start_s]:
+                for en in station_to_lines[end_s]:
+                    try:
+                        for p in nx.shortest_simple_paths(G_transfer, sn, en, weight='weight'):
+                            tr = sum(1 for i in range(len(p)-1) if G_transfer[p[i]][p[i+1]]['line'] == "同一駅")
+                            key = "->".join([s.split('_')[0] for s in p])
+                            if not any(r['key'] == key for r in transfer_results):
+                                transfer_results.append({'path': p, 'transfers': tr, 'key': key})
+                            if len(transfer_results) > 8: break
+                    except: continue
+            
+            for i, res in enumerate(sorted(transfer_results, key=lambda x: x['transfers'])[:5]):
+                with st.container(border=True):
+                    st.write(f"**ルート {i+1}** (乗り換え: {res['transfers']}回)")
+                    st.markdown(format_route_html(res['path'], G_transfer, is_transfer_graph=True), unsafe_allow_html=True)
+
+except Exception as e:
+    st.error(f"エラーが発生しました: {e}")
