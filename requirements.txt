@@ -1,1 +1,3 @@
-pandasとnetworkxを使います
+pandas
+networkx
+streamlit
