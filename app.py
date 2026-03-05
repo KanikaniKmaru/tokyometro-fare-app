@@ -142,4 +142,96 @@ try:
         return f"{s} | {kana_dict.get(s, '')}"
 
     # --- 定期管理 ---
-    with st.expander(f"🎫 定期券の登録・管理 ({len(st.session_state
+    with st.expander(f"🎫 定期券の登録・管理 ({len(st.session_state.pass_edges)}区間)"):
+        c1, cv, c2 = st.columns(3)
+        # デフォルトでよく使う駅を初期値に設定して、三ノ輪駅固定を回避
+        def get_idx(st_name): return all_stations.index(st_name) if st_name in all_stations else 0
+
+        p_start = c1.selectbox("起点", all_stations, key="ps", index=get_idx("池袋"), format_func=format_search)
+        p_via = cv.selectbox("経由(任意)", ["なし"] + all_stations, key="pv", format_func=lambda x: x if x=="なし" else format_search(x))
+        p_end = c2.selectbox("終点", all_stations, key="pe", index=get_idx("渋谷"), format_func=format_search)
+        
+        msg_slot = st.empty()
+        if st.button("この経路を定期として登録", use_container_width=True):
+            try:
+                if p_start == p_end:
+                    msg_slot.warning("起点と終点が同じ駅です。")
+                else:
+                    if p_via == "なし":
+                        nodes = nx.shortest_path(G_base, p_start, p_end, weight='weight')
+                    else:
+                        nodes = nx.shortest_path(G_base, p_start, p_via, weight='weight') + nx.shortest_path(G_base, p_via, p_end, weight='weight')[1:]
+                    for i in range(len(nodes)-1):
+                        u, v = nodes[i], nodes[i+1]
+                        edge_options = G_base[u][v]
+                        best_key = min(edge_options, key=lambda k: edge_options[k]['weight'])
+                        st.session_state.pass_edges.add(tuple(sorted((u, v))) + (edge_options[best_key]['line'],))
+                    msg_slot.success("定期券区間を更新しました。")
+                    st.rerun()
+            except: msg_slot.error("経路が見つかりませんでした。")
+        if st.button("すべてクリア", type="secondary"):
+            st.session_state.pass_edges = set(); st.rerun()
+
+    st.divider()
+
+    # --- ルート検索 ---
+    st.markdown("### 🔍 ルート検索")
+    col1, col2 = st.columns(2)
+    start_s = col1.selectbox("出発駅", all_stations, index=get_idx("新宿三丁目"), format_func=format_search)
+    end_s = col2.selectbox("到着駅", all_stations, index=get_idx("上野"), format_func=format_search)
+
+    if st.button("🔍 運賃・経路を検索", type="primary", use_container_width=True):
+        if start_s == end_s:
+            st.warning("出発駅と到着駅が同じです。")
+        else:
+            # 正規・定期計算
+            dist_reg = nx.shortest_path_length(G_base, start_s, end_s, weight='weight')
+            f_reg = get_fare_info(dist_reg)
+
+            G_fare_pass = G_fare_detail.copy()
+            for u, v, data in G_fare_pass.edges(data=True):
+                u_st, v_st = u.split('_')[0], v.split('_')[0]
+                if (tuple(sorted((u_st, v_st))) + (data['line'],)) in st.session_state.pass_edges:
+                    G_fare_pass[u][v]['weight'] = 0.0
+                    G_fare_pass[u][v]['is_pass'] = True
+
+            min_dist_eff = float('inf')
+            best_fare_path = []
+            for sn in st_nodes[start_s]:
+                for en in st_nodes[end_s]:
+                    try:
+                        d = nx.shortest_path_length(G_fare_pass, sn, en, weight='weight')
+                        if d < min_dist_eff:
+                            min_dist_eff = d
+                            best_fare_path = nx.shortest_path(G_fare_pass, sn, en, weight='weight')
+                    except: continue
+            
+            f_eff = get_fare_info(min_dist_eff)
+            st.markdown(f"### 💰 精算額: {f_eff['ta']}円")
+            c1, c2 = st.columns(2)
+            c1.metric("きっぷ (大人)", f"{f_eff['ta']}円", f"{f_eff['ta'] - f_reg['ta']}円")
+            c2.metric("ICカード (大人)", f"{f_eff['ia']}円", f"{f_eff['ia'] - f_reg['ia']}円")
+
+            with st.expander("📝 運賃計算の根拠"):
+                st.markdown(format_route_html(best_fare_path, G_fare_pass), unsafe_allow_html=True)
+
+            st.divider()
+            st.markdown("### 🚶 おすすめルート")
+            transfer_results = []
+            for sn in st_nodes[start_s]:
+                for en in st_nodes[end_s]:
+                    try:
+                        for p in nx.shortest_simple_paths(G_recommend, sn, en, weight='weight'):
+                            tr = sum(1 for i in range(len(p)-1) if G_recommend[p[i]][p[i+1]]['line'] == "同一駅")
+                            key = "->".join([node.split('_')[0] for node in p])
+                            if not any(r['key'] == key for r in transfer_results):
+                                transfer_results.append({'path': p, 'transfers': tr, 'key': key})
+                            if len(transfer_results) > 5: break
+                    except: continue
+            
+            for i, res in enumerate(sorted(transfer_results, key=lambda x: x['transfers'])[:5]):
+                with st.container(border=True):
+                    st.write(f"**ルート {i+1}** (乗り換え: {res['transfers']}回)")
+                    st.markdown(format_route_html(res['path'], G_recommend, st.session_state.pass_edges), unsafe_allow_html=True)
+except Exception as e:
+    st.error(f"システムエラー: {e}")
