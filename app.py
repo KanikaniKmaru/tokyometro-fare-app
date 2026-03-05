@@ -109,56 +109,49 @@ try:
     # --- 定期管理 ---
     with st.expander(f"🎫 定期券の登録・管理 ({len(st.session_state.pass_edges)}区間登録中)"):
         c1, cv, c2 = st.columns(3)
-        p_start = c1.selectbox("起点を選択", all_stations, key="ps", index=get_safe_idx("池袋"), format_func=format_search)
+        p_start = c1.selectbox("起点駅", all_stations, key="ps", index=get_safe_idx("池袋"), format_func=format_search)
         p_via = cv.selectbox("経由駅(任意)", ["なし"] + all_stations, key="pv", format_func=lambda x: x if x=="なし" else format_search(x))
-        p_end = c2.selectbox("終点を選択", all_stations, key="pe", index=get_safe_idx("渋谷", 1), format_func=format_search)
+        p_end = c2.selectbox("終点駅", all_stations, key="pe", index=get_safe_idx("渋谷", 1), format_func=format_search)
         
-        # 登録前確認
         route_preview = f"{p_start} ➔ {'(経由: ' + p_via + ') ➔ ' if p_via != 'なし' else ''}{p_end}"
-        st.info(f"📍 登録予定の経路: **{route_preview}**")
+        st.caption(f"📍 選択中の経路: {route_preview}")
         
         msg_slot = st.empty()
-        if st.button("この経路を定期券として確定する", use_container_width=True, type="primary"):
+        if st.button("この区間を定期券として追加する", use_container_width=True, type="primary"):
             try:
                 if p_start == p_end: msg_slot.warning("起点と終点が同じ駅です。")
                 else:
-                    with st.spinner("経路を計算中..."):
-                        if p_via == "なし":
-                            nodes = nx.shortest_path(G_base, p_start, p_end, weight='weight')
-                        else:
-                            # 分割して計算（エラー特定のため）
-                            try: p1 = nx.shortest_path(G_base, p_start, p_via, weight='weight')
-                            except: raise Exception(f"「{p_start}」から「{p_via}」への道が見つかりません。")
-                            try: p2 = nx.shortest_path(G_base, p_via, p_end, weight='weight')
-                            except: raise Exception(f"「{p_via}」から「{p_end}」への道が見つかりません。")
-                            nodes = p1 + p2[1:]
-                        
-                        for i in range(len(nodes)-1):
-                            u, v = nodes[i], nodes[i+1]
-                            edge_opts = G_base[u][v]
-                            best_k = min(edge_opts, key=lambda k: edge_opts[k]['weight'])
-                            st.session_state.pass_edges.add(tuple(sorted((u, v))) + (edge_opts[best_k]['line'],))
-                        msg_slot.success(f"【登録完了】 {route_preview}")
-                        st.rerun()
-            except Exception as e: msg_slot.error(f"⚠️ {str(e)}")
+                    if p_via == "なし": nodes = nx.shortest_path(G_base, p_start, p_end, weight='weight')
+                    else: nodes = nx.shortest_path(G_base, p_start, p_via, weight='weight') + nx.shortest_path(G_base, p_via, p_end, weight='weight')[1:]
+                    
+                    for i in range(len(nodes)-1):
+                        u, v = nodes[i], nodes[i+1]
+                        edge_opts = G_base[u][v]
+                        best_k = min(edge_opts, key=lambda k: edge_opts[k]['weight'])
+                        st.session_state.pass_edges.add(tuple(sorted((u, v))) + (edge_opts[best_k]['line'],))
+                    msg_slot.success(f"登録完了！")
+                    st.rerun()
+            except: msg_slot.error(f"経路が見つかりません。")
 
-        if st.button("定期券データを全てリセット", type="secondary"):
+        if st.button("定期券データをリセット", type="secondary"):
             st.session_state.pass_edges = set(); st.rerun()
 
     st.divider()
 
     # --- ルート検索 ---
-    st.markdown("### 🔍 ルート検索")
+    st.markdown("### 🔍 運賃・経路検索")
     col1, col2 = st.columns(2)
     start_s = col1.selectbox("出発駅", all_stations, index=get_safe_idx("新宿三丁目"), format_func=format_search)
     end_s = col2.selectbox("到着駅", all_stations, index=get_safe_idx("上野"), format_func=format_search)
 
-    if st.button("🔍 運賃・経路を検索", use_container_width=True):
+    if st.button("🔍 検索実行", use_container_width=True, type="primary"):
         if start_s == end_s: st.warning("出発駅と到着駅が同じです。")
         else:
+            # 正規運賃
             dist_reg = nx.shortest_path_length(G_base, start_s, end_s, weight='weight')
             f_reg = get_fare_info(dist_reg)
 
+            # 定期考慮
             G_fare_pass = G_fare_detail.copy()
             for u, v, data in G_fare_pass.edges(data=True):
                 u_st, v_st = u.split('_')[0], v.split('_')[0]
@@ -174,12 +167,26 @@ try:
                     except: continue
             
             f_eff = get_fare_info(min_dist_eff)
+            
+            # --- 運賃表示セクション ---
             st.markdown(f"### 💰 精算額: {f_eff['ta']}円")
             c1, c2 = st.columns(2)
-            c1.metric("きっぷ (大人)", f"{f_eff['ta']}円", f"{f_eff['ta'] - f_reg['ta']}円")
-            c2.metric("ICカード (大人)", f"{f_eff['ia']}円", f"{f_eff['ia'] - f_reg['ia']}円")
+            
+            # きっぷ
+            diff_t = f_eff['ta'] - f_reg['ta']
+            c1.metric("きっぷ (大人)", f"{f_eff['ta']}円", f"{diff_t}円", delta_color="normal")
+            c1.caption(f"小児: {f_eff['tc']}円 (通常:{f_reg['tc']}円)")
+            
+            # ICカード
+            diff_i = f_eff['ia'] - f_reg['ia']
+            c2.metric("ICカード (大人)", f"{f_eff['ia']}円", f"{diff_i}円", delta_color="normal")
+            c2.caption(f"小児: {f_eff['ic']}円 (通常:{f_reg['ic']}円)")
+
+            if diff_t < 0:
+                st.success(f"🎊 定期券の利用で **{-diff_t}円** おトクになりました！")
 
             with st.expander("📝 運賃計算の根拠"):
+                st.write(f"有効キロ程: {min_dist_eff:.1f} km / 正規キロ程: {dist_reg:.1f} km")
                 st.markdown(format_route_html(best_fare_path, G_fare_pass), unsafe_allow_html=True)
 
             st.divider()
