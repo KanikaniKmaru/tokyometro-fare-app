@@ -4,7 +4,7 @@ import networkx as nx
 import math
 
 # 画面設定
-st.set_page_config(page_title="メトロ運賃・定期案内プロ", page_icon="🚇", layout="centered")
+st.set_page_config(page_title="メトロ運賃・定期案内", page_icon="🚇", layout="centered")
 
 # --- 設定・カラー ---
 LINE_COLORS = {
@@ -16,10 +16,10 @@ LINE_COLORS = {
 
 @st.cache_data
 def load_data():
-    # 読み仮名付きの新しいファイルを読み込み
+    # ひらがな付きファイルを読み込み
     df = pd.read_csv('metrodata_kana.csv')
     
-    # 読み方データを辞書に保存（検索用）
+    # 読み方データを辞書に保存
     kana_dict = {}
     for _, row in df.iterrows():
         kana_dict[row['station1']] = row['station1_kana']
@@ -64,29 +64,49 @@ def line_tag(line, is_pass=False):
     lbl = f"{line} [定期内]" if is_pass else line
     return f'<span style="background-color:{color}; color:white; padding:2px 6px; border-radius:3px; font-size:0.8em; font-weight:bold;">{lbl}</span>'
 
+# 改良版：重複を排除し、乗り換えを分かりやすくしたHTML生成
 def format_route_html(path, G, is_transfer_graph=False):
     html = ""
     curr_line = None
     seg_start = path[0].split('_')[0] if is_transfer_graph else path[0]
     seg_dist = 0.0
     seg_is_pass = False
+    
+    # 最後に表示した駅名を追跡
+    last_printed = seg_start
+    html += f"<b>{seg_start}</b><br>"
 
     for i in range(len(path) - 1):
-        u, v = path[i], path[i+1]
+        u_node, v_node = path[i], path[i+1]
+        u_name = u_node.split('_')[0] if is_transfer_graph else u_node
+        v_name = v_node.split('_')[0] if is_transfer_graph else v_node
+        
+        # エッジデータ取得
         if is_transfer_graph:
-            edge_data = G[u][v]
-            line, dist, is_p = edge_data['line'], edge_data['weight'], False
+            edge = G[u_node][v_node]
+            line, dist, is_p = edge['line'], edge['weight'], False
         else:
-            edge_data = G[u][v]
-            line, dist, is_p = edge_data['line'], edge_data['weight'], edge_data.get('is_pass', False)
+            # MultiGraphの場合は最適なエッジを選択
+            edge_data = G[u_node][v_node]
+            edge = min(edge_data.values(), key=lambda x: x['weight']) if hasattr(edge_data, 'values') else edge_data
+            line, dist, is_p = edge['line'], edge.get('weight', 0), edge.get('is_pass', False)
 
         if line == "同一駅":
             if curr_line:
-                html += f"<b>{seg_start}</b><br> ↓ {line_tag(curr_line, seg_is_pass)} {seg_dist:.1f}km<br>"
-            # 同一駅（乗り換え）をより分かりやすく表示
-            html += f"<b>{u.split('_')[0]}</b> (徒歩で乗り換え)<br>"
-            seg_start = v.split('_')[0] if is_transfer_graph else v
-            curr_line, seg_dist, seg_is_pass = None, 0.0, False
+                html += f" ↓ {line_tag(curr_line, seg_is_pass)} {seg_dist:.1f}km<br>"
+                if last_printed != u_name:
+                    html += f"<b>{u_name}</b><br>"
+                    last_printed = u_name
+                curr_line, seg_dist = None, 0.0
+            
+            # 乗り換えラベル（同一駅名なら改札内、別名なら徒歩移動）
+            label = "(改札内乗り換え)" if u_name == v_name else f"(徒歩で {v_name} へ移動)"
+            if f" {label}<br>" not in html:
+                html += f" {label}<br>"
+            
+            if last_printed != v_name:
+                html += f"<b>{v_name}</b><br>"
+                last_printed = v_name
             continue
 
         if curr_line is None:
@@ -94,13 +114,20 @@ def format_route_html(path, G, is_transfer_graph=False):
         elif line == curr_line and is_p == seg_is_pass:
             seg_dist += dist
         else:
-            html += f"<b>{seg_start}</b><br> ↓ {line_tag(curr_line, seg_is_pass)} {seg_dist:.1f}km<br>"
-            seg_start = u.split('_')[0] if is_transfer_graph else u
+            # 路線切り替わり
+            html += f" ↓ {line_tag(curr_line, seg_is_pass)} {seg_dist:.1f}km<br>"
+            if last_printed != u_name:
+                html += f"<b>{u_name}</b><br>"
+                last_printed = u_name
             curr_line, seg_dist, seg_is_pass = line, dist, is_p
             
     if curr_line:
-        html += f"<b>{seg_start}</b><br> ↓ {line_tag(curr_line, seg_is_pass)} {seg_dist:.1f}km<br>"
-    html += f"<b>{path[-1].split('_')[0]}</b>"
+        html += f" ↓ {line_tag(curr_line, seg_is_pass)} {seg_dist:.1f}km<br>"
+    
+    last_station = path[-1].split('_')[0] if is_transfer_graph else path[-1]
+    if last_printed != last_station:
+        html += f"<b>{last_station}</b>"
+    
     return html
 
 # --- 実行 ---
@@ -108,16 +135,16 @@ try:
     G_base, G_transfer, all_stations, station_to_lines, kana_dict = load_data()
     if "pass_edges" not in st.session_state: st.session_state.pass_edges = set()
 
-    # 検索用のフォーマット：漢字とかなを両方含める（| で区切って見やすく）
-    def format_station_for_search(s):
+    # 検索用フォーマット：漢字とかなを両方含める
+    def format_search(s):
         return f"{s} | {kana_dict.get(s, '')}"
 
     # --- 定期管理 ---
     with st.expander(f"🎫 定期券の登録・管理 ({len(st.session_state.pass_edges)}区間)"):
         c1, cv, c2 = st.columns(3)
-        p_start = c1.selectbox("起点", all_stations, key="ps", format_func=format_station_for_search)
-        p_via = cv.selectbox("経由(任意)", ["なし"] + all_stations, key="pv", format_func=lambda x: x if x=="なし" else format_station_for_search(x))
-        p_end = c2.selectbox("終点", all_stations, key="pe", format_func=format_station_for_search)
+        p_start = c1.selectbox("起点", all_stations, key="ps", format_func=format_search)
+        p_via = cv.selectbox("経由(任意)", ["なし"] + all_stations, key="pv", format_func=lambda x: x if x=="なし" else format_search(x))
+        p_end = c2.selectbox("終点", all_stations, key="pe", format_func=format_search)
         msg_slot = st.empty()
         
         if st.button("この経路を定期として登録", use_container_width=True):
@@ -130,17 +157,15 @@ try:
                     else:
                         nodes = nx.shortest_path(G_base, p_start, p_via, weight='weight') + \
                                 nx.shortest_path(G_base, p_via, p_end, weight='weight')[1:]
-                    
                     for i in range(len(nodes)-1):
                         u, v = nodes[i], nodes[i+1]
-                        edge_options = G_base[u][v]
-                        best_key = min(edge_options, key=lambda k: edge_options[k]['weight'])
-                        st.session_state.pass_edges.add(tuple(sorted((u, v))) + (edge_options[best_key]['line'],))
+                        edge_data = G_base[u][v]
+                        best_key = min(edge_data, key=lambda k: edge_data[k]['weight'])
+                        st.session_state.pass_edges.add(tuple(sorted((u, v))) + (edge_data[best_key]['line'],))
                     msg_slot.success("定期券区間を更新しました。")
                     st.rerun()
-            except Exception:
-                msg_slot.error(f"経路が見つかりませんでした。")
-
+            except:
+                msg_slot.error("経路が見つかりませんでした。")
         if st.button("すべてクリア", type="secondary"):
             st.session_state.pass_edges = set()
             st.rerun()
@@ -150,16 +175,18 @@ try:
     # --- ルート検索 ---
     st.markdown("### 🔍 ルート検索")
     col1, col2 = st.columns(2)
-    start_s = col1.selectbox("出発駅", all_stations, index=all_stations.index("新宿三丁目") if "新宿三丁目" in all_stations else 0, format_func=format_station_for_search)
-    end_s = col2.selectbox("到着駅", all_stations, index=all_stations.index("上野") if "上野" in all_stations else 0, format_func=format_station_for_search)
+    start_s = col1.selectbox("出発駅", all_stations, index=all_stations.index("新宿三丁目"), format_func=format_search)
+    end_s = col2.selectbox("到着駅", all_stations, index=all_stations.index("上野"), format_func=format_search)
 
     if st.button("🔍 運賃・経路を検索", type="primary", use_container_width=True):
         if start_s == end_s:
             st.warning("出発駅と到着駅が同じです。")
         else:
+            # 正規運賃
             dist_reg = nx.shortest_path_length(G_base, start_s, end_s, weight='weight')
             f_reg = get_fare_info(dist_reg)
 
+            # 定期考慮
             G_fare = nx.Graph()
             for u, v, key, data in G_base.edges(keys=True, data=True):
                 is_p = (tuple(sorted((u, v))) + (data['line'],)) in st.session_state.pass_edges
@@ -207,4 +234,4 @@ try:
                     st.markdown(format_route_html(res['path'], G_transfer, is_transfer_graph=True), unsafe_allow_html=True)
 
 except Exception as e:
-    st.error(f"エラーが発生しました: {e}")
+    st.error(f"システムエラー: {e}")
