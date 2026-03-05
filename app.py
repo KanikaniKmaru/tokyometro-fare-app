@@ -16,10 +16,9 @@ LINE_COLORS = {
 
 @st.cache_data
 def load_data():
-    # 参照ファイルを変更
     df = pd.read_csv('metrodata_kana.csv')
     
-    # 駅名とかなの対応辞書を作成
+    # 読み方データは保持（将来用）
     kana_dict = {}
     for _, row in df.iterrows():
         kana_dict[row['station1']] = row['station1_kana']
@@ -107,16 +106,16 @@ try:
     G_base, G_transfer, all_stations, station_to_lines, kana_dict = load_data()
     if "pass_edges" not in st.session_state: st.session_state.pass_edges = set()
 
-    # セレクトボックスの表示を「駅名 (かな)」にするための関数
-    def format_station(s):
-        return f"{s} ({kana_dict.get(s, '')})"
+    # 漢字のみを表示するように変更
+    def format_station_minimal(s):
+        return s
 
     # --- 定期管理 ---
     with st.expander(f"🎫 定期券の登録・管理 ({len(st.session_state.pass_edges)}区間)"):
         c1, cv, c2 = st.columns(3)
-        p_start = c1.selectbox("起点", all_stations, key="ps", format_func=format_station)
-        p_via = cv.selectbox("経由(任意)", ["なし"] + all_stations, key="pv", format_func=lambda x: x if x=="なし" else format_station(x))
-        p_end = c2.selectbox("終点", all_stations, key="pe", format_func=format_station)
+        p_start = c1.selectbox("起点", all_stations, key="ps", format_func=format_station_minimal)
+        p_via = cv.selectbox("経由(任意)", ["なし"] + all_stations, key="pv", format_func=lambda x: x if x=="なし" else format_station_minimal(x))
+        p_end = c2.selectbox("終点", all_stations, key="pe", format_func=format_station_minimal)
         msg_slot = st.empty()
         
         if st.button("この経路を定期として登録", use_container_width=True):
@@ -149,8 +148,8 @@ try:
     # --- ルート検索 ---
     st.markdown("### 🔍 ルート検索")
     col1, col2 = st.columns(2)
-    start_s = col1.selectbox("出発駅", all_stations, index=all_stations.index("新宿三丁目") if "新宿三丁目" in all_stations else 0, format_func=format_station)
-    end_s = col2.selectbox("到着駅", all_stations, index=all_stations.index("上野") if "上野" in all_stations else 0, format_func=format_station)
+    start_s = col1.selectbox("出発駅", all_stations, index=all_stations.index("新宿三丁目") if "新宿三丁目" in all_stations else 0, format_func=format_station_minimal)
+    end_s = col2.selectbox("到着駅", all_stations, index=all_stations.index("上野") if "上野" in all_stations else 0, format_func=format_station_minimal)
 
     if st.button("🔍 運賃・経路を検索", type="primary", use_container_width=True):
         if start_s == end_s:
@@ -163,47 +162,4 @@ try:
             for u, v, key, data in G_base.edges(keys=True, data=True):
                 is_p = (tuple(sorted((u, v))) + (data['line'],)) in st.session_state.pass_edges
                 w = 0.0 if is_p else data['weight']
-                if not G_fare.has_edge(u, v) or w < G_fare[u][v]['weight']:
-                    G_fare.add_edge(u, v, weight=w, line=data['line'], is_pass=is_p)
-            
-            dist_eff = nx.shortest_path_length(G_fare, start_s, end_s, weight='weight')
-            f_eff = get_fare_info(dist_eff)
-
-            st.markdown("### 💰 運賃比較")
-            c1, c2 = st.columns(2)
-            diff_t = f_eff['ta'] - f_reg['ta']
-            c1.metric("きっぷ (大人)", f"{f_eff['ta']}円", f"{diff_t}円", delta_color="normal")
-            st.caption(f"正規: {f_reg['ta']}円 / 小児: {f_eff['tc']}円")
-            
-            diff_i = f_eff['ia'] - f_reg['ia']
-            c2.metric("ICカード (大人)", f"{f_eff['ia']}円", f"{diff_i}円", delta_color="normal")
-            st.caption(f"正規: {f_reg['ia']}円 / 小児: {f_eff['ic']}円")
-
-            if diff_t < 0:
-                st.success(f"定期券の利用で **{-diff_t}円** おトクになりました！")
-
-            with st.expander("📝 運賃計算の根拠を確認する"):
-                path_f = nx.shortest_path(G_fare, start_s, end_s, weight='weight')
-                st.markdown(format_route_html(path_f, G_fare), unsafe_allow_html=True)
-
-            st.divider()
-            st.markdown("### 🚶 おすすめの乗車ルート")
-            transfer_results = []
-            for sn in station_to_lines[start_s]:
-                for en in station_to_lines[end_s]:
-                    try:
-                        for p in nx.shortest_simple_paths(G_transfer, sn, en, weight='weight'):
-                            tr = sum(1 for i in range(len(p)-1) if G_transfer[p[i]][p[i+1]]['line'] == "同一駅")
-                            key = "->".join([s.split('_')[0] for s in p])
-                            if not any(r['key'] == key for r in transfer_results):
-                                transfer_results.append({'path': p, 'transfers': tr, 'key': key})
-                            if len(transfer_results) > 8: break
-                    except: continue
-            
-            for i, res in enumerate(sorted(transfer_results, key=lambda x: x['transfers'])[:5]):
-                with st.container(border=True):
-                    st.write(f"**ルート {i+1}** (乗り換え: {res['transfers']}回)")
-                    st.markdown(format_route_html(res['path'], G_transfer, is_transfer_graph=True), unsafe_allow_html=True)
-
-except Exception as e:
-    st.error(f"エラーが発生しました: {e}")
+                if not
