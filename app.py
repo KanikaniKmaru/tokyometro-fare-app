@@ -199,4 +199,5 @@ try:
             for i, res in enumerate(sorted(transfer_results, key=lambda x: x['transfers'])[:5]):
                 with st.container(border=True):
                     st.write(f"**ルート {i+1}** (乗り換え: {res['transfers']}回)")
-                    st.markdown(format_route_html(
+                    st.markdown(format_route_html(res['path'], G_recommend, st.session_state.pass_edges), unsafe_allow_html=True)
+except Exception as e: st.error(f"システムエラー: {e}")
