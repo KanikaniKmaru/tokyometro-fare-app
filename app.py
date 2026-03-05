@@ -16,7 +16,15 @@ LINE_COLORS = {
 
 @st.cache_data
 def load_data():
-    df = pd.read_csv('metrodata.csv')
+    # 参照ファイルを変更
+    df = pd.read_csv('metrodata_kana.csv')
+    
+    # 駅名とかなの対応辞書を作成
+    kana_dict = {}
+    for _, row in df.iterrows():
+        kana_dict[row['station1']] = row['station1_kana']
+        kana_dict[row['station2']] = row['station2_kana']
+    
     G_base = nx.MultiGraph() 
     for _, row in df.iterrows():
         G_base.add_edge(row['station1'], row['station2'], weight=row['distance'], line=row['line'])
@@ -37,7 +45,7 @@ def load_data():
             for j in range(i + 1, len(nodes)):
                 G_transfer.add_edge(nodes[i], nodes[j], weight=transfer_penalty, line="同一駅")
                 
-    return G_base, G_transfer, sorted(list(station_to_lines.keys())), station_to_lines
+    return G_base, G_transfer, sorted(list(station_to_lines.keys())), station_to_lines, kana_dict
 
 def get_fare_info(distance):
     calc_km = math.ceil(distance)
@@ -56,7 +64,6 @@ def line_tag(line, is_pass=False):
     lbl = f"{line} [定期内]" if is_pass else line
     return f'<span style="background-color:{color}; color:white; padding:2px 6px; border-radius:3px; font-size:0.8em; font-weight:bold;">{lbl}</span>'
 
-# 改良版：経路表示ロジック
 def format_route_html(path, G, is_transfer_graph=False):
     html = ""
     curr_line = None
@@ -66,7 +73,6 @@ def format_route_html(path, G, is_transfer_graph=False):
 
     for i in range(len(path) - 1):
         u, v = path[i], path[i+1]
-        
         if is_transfer_graph:
             edge_data = G[u][v]
             line, dist, is_p = edge_data['line'], edge_data['weight'], False
@@ -74,7 +80,6 @@ def format_route_html(path, G, is_transfer_graph=False):
             edge_data = G[u][v]
             line, dist, is_p = edge_data['line'], edge_data['weight'], edge_data.get('is_pass', False)
 
-        # 「同一駅」の処理
         if line == "同一駅":
             if curr_line:
                 html += f"<b>{seg_start}</b><br> ↓ {line_tag(curr_line, seg_is_pass)} {seg_dist:.1f}km<br>"
@@ -99,15 +104,19 @@ def format_route_html(path, G, is_transfer_graph=False):
 
 # --- 実行 ---
 try:
-    G_base, G_transfer, all_stations, station_to_lines = load_data()
+    G_base, G_transfer, all_stations, station_to_lines, kana_dict = load_data()
     if "pass_edges" not in st.session_state: st.session_state.pass_edges = set()
+
+    # セレクトボックスの表示を「駅名 (かな)」にするための関数
+    def format_station(s):
+        return f"{s} ({kana_dict.get(s, '')})"
 
     # --- 定期管理 ---
     with st.expander(f"🎫 定期券の登録・管理 ({len(st.session_state.pass_edges)}区間)"):
         c1, cv, c2 = st.columns(3)
-        p_start = c1.selectbox("起点", all_stations, key="ps")
-        p_via = cv.selectbox("経由(任意)", ["なし"] + all_stations, key="pv")
-        p_end = c2.selectbox("終点", all_stations, key="pe")
+        p_start = c1.selectbox("起点", all_stations, key="ps", format_func=format_station)
+        p_via = cv.selectbox("経由(任意)", ["なし"] + all_stations, key="pv", format_func=lambda x: x if x=="なし" else format_station(x))
+        p_end = c2.selectbox("終点", all_stations, key="pe", format_func=format_station)
         msg_slot = st.empty()
         
         if st.button("この経路を定期として登録", use_container_width=True):
@@ -128,8 +137,8 @@ try:
                         st.session_state.pass_edges.add(tuple(sorted((u, v))) + (edge_options[best_key]['line'],))
                     msg_slot.success("定期券区間を更新しました。")
                     st.rerun()
-            except Exception as e:
-                msg_slot.error(f"経路が見つかりませんでした: {p_start}～{p_end}")
+            except Exception:
+                msg_slot.error(f"経路が見つかりませんでした。")
 
         if st.button("すべてクリア", type="secondary"):
             st.session_state.pass_edges = set()
@@ -140,18 +149,16 @@ try:
     # --- ルート検索 ---
     st.markdown("### 🔍 ルート検索")
     col1, col2 = st.columns(2)
-    start_s = col1.selectbox("出発駅", all_stations, index=all_stations.index("新宿三丁目"))
-    end_s = col2.selectbox("到着駅", all_stations, index=all_stations.index("上野"))
+    start_s = col1.selectbox("出発駅", all_stations, index=all_stations.index("新宿三丁目") if "新宿三丁目" in all_stations else 0, format_func=format_station)
+    end_s = col2.selectbox("到着駅", all_stations, index=all_stations.index("上野") if "上野" in all_stations else 0, format_func=format_station)
 
     if st.button("🔍 運賃・経路を検索", type="primary", use_container_width=True):
         if start_s == end_s:
             st.warning("出発駅と到着駅が同じです。")
         else:
-            # 正規運賃
             dist_reg = nx.shortest_path_length(G_base, start_s, end_s, weight='weight')
             f_reg = get_fare_info(dist_reg)
 
-            # 定期考慮運賃
             G_fare = nx.Graph()
             for u, v, key, data in G_base.edges(keys=True, data=True):
                 is_p = (tuple(sorted((u, v))) + (data['line'],)) in st.session_state.pass_edges
@@ -162,7 +169,6 @@ try:
             dist_eff = nx.shortest_path_length(G_fare, start_s, end_s, weight='weight')
             f_eff = get_fare_info(dist_eff)
 
-            # 運賃比較
             st.markdown("### 💰 運賃比較")
             c1, c2 = st.columns(2)
             diff_t = f_eff['ta'] - f_reg['ta']
