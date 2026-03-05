@@ -228,4 +228,26 @@ try:
 
             with st.expander("📝 運賃計算の根拠（最短経路）"):
                 st.write(f"有効キロ程: {min_dist_eff:.1f} km / 正規キロ程: {dist_reg:.1f} km")
-                st.markdown(format_route_html(best_fare_path, G_fare_pass), unsafe_allow_
+                st.markdown(format_route_html(best_fare_path, G_fare_pass), unsafe_allow_html=True)
+
+            st.divider()
+            st.markdown("### 🚶 おすすめの乗車ルート")
+            transfer_results = []
+            for sn in st_nodes[start_s]:
+                for en in st_nodes[end_s]:
+                    try:
+                        for p in nx.shortest_simple_paths(G_recommend, sn, en, weight='weight'):
+                            tr = sum(1 for i in range(len(p)-1) if G_recommend[p[i]][p[i+1]]['line'] == "同一駅")
+                            key = "->".join([node.split('_')[0] for node in p])
+                            if not any(r['key'] == key for r in transfer_results):
+                                transfer_results.append({'path': p, 'transfers': tr, 'key': key})
+                            if len(transfer_results) > 8: break
+                    except: continue
+            
+            for i, res in enumerate(sorted(transfer_results, key=lambda x: x['transfers'])[:5]):
+                with st.container(border=True):
+                    st.write(f"**ルート {i+1}** (乗り換え: {res['transfers']}回)")
+                    st.markdown(format_route_html(res['path'], G_recommend, st.session_state.pass_edges), unsafe_allow_html=True)
+
+except Exception as e:
+    st.error(f"システムエラー: {e}")
