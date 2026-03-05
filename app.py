@@ -64,7 +64,7 @@ def line_tag(line, is_pass=False):
     lbl = f"{line} [定期内]" if is_pass else line
     return f'<span style="background-color:{color}; color:white; padding:2px 6px; border-radius:3px; font-size:0.8em; font-weight:bold;">{lbl}</span>'
 
-# 改良版：重複を排除し、乗り換えを分かりやすくしたHTML生成
+# 改良版：バグを修正した経路HTML生成
 def format_route_html(path, G, is_transfer_graph=False):
     html = ""
     curr_line = None
@@ -72,7 +72,6 @@ def format_route_html(path, G, is_transfer_graph=False):
     seg_dist = 0.0
     seg_is_pass = False
     
-    # 最後に表示した駅名を追跡
     last_printed = seg_start
     html += f"<b>{seg_start}</b><br>"
 
@@ -81,15 +80,18 @@ def format_route_html(path, G, is_transfer_graph=False):
         u_name = u_node.split('_')[0] if is_transfer_graph else u_node
         v_name = v_node.split('_')[0] if is_transfer_graph else v_node
         
-        # エッジデータ取得
+        # エッジデータの取得（エラー回避のための修正）
+        edge_data = G[u_node][v_node]
         if is_transfer_graph:
-            edge = G[u_node][v_node]
-            line, dist, is_p = edge['line'], edge['weight'], False
+            edge = edge_data # nx.Graph
+        elif isinstance(G, nx.MultiGraph):
+            edge = min(edge_data.values(), key=lambda x: x['weight'])
         else:
-            # MultiGraphの場合は最適なエッジを選択
-            edge_data = G[u_node][v_node]
-            edge = min(edge_data.values(), key=lambda x: x['weight']) if hasattr(edge_data, 'values') else edge_data
-            line, dist, is_p = edge['line'], edge.get('weight', 0), edge.get('is_pass', False)
+            edge = edge_data # nx.Graph (G_fareなど)
+
+        line = edge.get('line', '不明')
+        dist = edge.get('weight', 0.0)
+        is_p = edge.get('is_pass', False)
 
         if line == "同一駅":
             if curr_line:
@@ -99,7 +101,6 @@ def format_route_html(path, G, is_transfer_graph=False):
                     last_printed = u_name
                 curr_line, seg_dist = None, 0.0
             
-            # 乗り換えラベル（同一駅名なら改札内、別名なら徒歩移動）
             label = "(改札内乗り換え)" if u_name == v_name else f"(徒歩で {v_name} へ移動)"
             if f" {label}<br>" not in html:
                 html += f" {label}<br>"
@@ -114,7 +115,6 @@ def format_route_html(path, G, is_transfer_graph=False):
         elif line == curr_line and is_p == seg_is_pass:
             seg_dist += dist
         else:
-            # 路線切り替わり
             html += f" ↓ {line_tag(curr_line, seg_is_pass)} {seg_dist:.1f}km<br>"
             if last_printed != u_name:
                 html += f"<b>{u_name}</b><br>"
@@ -135,7 +135,7 @@ try:
     G_base, G_transfer, all_stations, station_to_lines, kana_dict = load_data()
     if "pass_edges" not in st.session_state: st.session_state.pass_edges = set()
 
-    # 検索用フォーマット：漢字とかなを両方含める
+    # 検索窓用の表示設定
     def format_search(s):
         return f"{s} | {kana_dict.get(s, '')}"
 
